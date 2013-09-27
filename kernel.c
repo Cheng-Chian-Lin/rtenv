@@ -39,7 +39,7 @@ size_t strlen(const char *s)
 	);
 }
 
-void puts(char *s)
+void putstr(char *s)
 {
 	while (*s) {
 		while (USART_GetFlagStatus(USART2, USART_FLAG_TXE) == RESET)
@@ -48,6 +48,7 @@ void puts(char *s)
 		s++;
 	}
 }
+
 
 #define STACK_SIZE 512 /* Size of task stacks in words */
 #define TASK_LIMIT 8  /* Max number of tasks we can handle */
@@ -104,6 +105,17 @@ struct task_control_block {
     struct task_control_block **prev;
     struct task_control_block  *next;
 };
+
+
+
+struct task_info {
+	size_t *task_count;
+	struct task_control_block *tasks;
+};
+
+struct task_info itask; 
+
+
 
 /* 
  * pathserver assumes that all files are FIFOs that were registered
@@ -314,48 +326,122 @@ void queue_str_task2()
 	queue_str_task("Hello 2\n", 50);
 }
 
+////////////////////////////////////////////////////////////////////////
+
+void int2string(int in,char* out)	//convert interger to character
+{
+	int i=0,j;
+	char out_tmp[10];
+
+	if(in==0)
+	{
+		out[0] = '0';
+		out[1] = '\0';
+		return ;
+	}
+	else
+	{
+		while(in>0)
+		{
+			out_tmp[i]='0'+(in%10);
+			in=in/10;
+			i++;
+  		}
+  
+		for(j=0;j<i;j++){
+			out[j]=out_tmp[i-1-j] ;
+		}
+		out[j]='\0';
+	}
+}
+
+
+void command_ps()	//ps
+{
+	int i=0;
+	char tmpstr[6];
+	putstr("Process ID\tPriority\n\r");
+	for(i=0;i<*itask.task_count;i++)
+	{
+		int2string(itask.tasks[i].pid,tmpstr);
+		putstr(tmpstr);
+		putstr("\t\t");
+		int2string(itask.tasks[i].priority,tmpstr);
+		putstr(tmpstr);
+		putstr("\n\r");
+	}	
+
+}
+
 void serial_readwrite_task()
 {
 	int fdout, fdin;
-	char str[100];
-	char ch;
-	int curr_char;
+	char str[120];
+	char ch[1];
+	int curr_char=0;
+	int j;
 	int done;
 
 	fdout = mq_open("/tmp/mqueue/out", 0);
 	fdin = open("/dev/tty0/in", 0);
 
 	/* Prepare the response message to be queued. */
-	memcpy(str, "Got:", 4);
+	
+	putstr("Welcome! This is Lab19 homework written by Cheng-Chian Lin\n\r");
+	putstr("type 'help' for more information\n\r");
 
 	while (1) {
-		curr_char = 4;
-		done = 0;
+		curr_char=0;
+		j=0;
+		done=0;
+		putstr(">");
+		
+		while(j<40){		//clean the previous command stored in str
+			str[j]='\0';
+			j++;
+		}
+
 		do {
 			/* Receive a byte from the RS232 port (this call will
 			 * block). */
-			read(fdin, &ch, 1);
+			read(fdin, ch, 1);
+			putstr(ch);
 
 			/* If the byte is an end-of-line type character, then
 			 * finish the string and inidcate we are done.
 			 */
-			if (curr_char >= 98 || (ch == '\r') || (ch == '\n')) {
-				str[curr_char] = '\n';
-				str[curr_char+1] = '\0';
-				done = -1;
-				/* Otherwise, add the character to the
-				 * response string. */
-			}
-			else {
-				str[curr_char++] = ch;
-			}
-		} while (!done);
+			if (ch[0] == 13) {			//press enter
+				putstr("\n");				
+				if(strcmp(str,"hello")==0)
+					putstr("Hello! How are you doing?\n\r");
+				else if(strcmp(str,"ps")==0)
+					command_ps();
+				else if(strncmp(str,"echo",4)==0){					
+					putstr(&str[5]);
+					putstr("\n\r");	
+				}
+				else if(strcmp(str,"help")==0){
+					putstr("supported commands are as follow:\n\r");
+					putstr("hello --> greetings from computer!\n\r");
+					putstr("echo --> show the word you just typed!\n\r");
+					putstr("ps --> current executing processes and their priority!\n\r");
+				}
+				else if(strcmp(str,"")==0){}
+				else
+					putstr("Command not found!\n\r");
 
+				done = -1;
+			}
+			/* Otherwise, add the character to the
+			 * response string. */
+			else
+				str[curr_char++] = ch[0];		
+		}while(!done);
 		/* Once we are done building the response string, queue the
 		 * response to be sent to the RS232 port.
 		 */
-		write(fdout, str, curr_char+1+1);
 	}
+
 }
 
 void first()
@@ -366,8 +452,8 @@ void first()
 	if (!fork()) setpriority(0, 0), serialout(USART2, USART2_IRQn);
 	if (!fork()) setpriority(0, 0), serialin(USART2, USART2_IRQn);
 	if (!fork()) rs232_xmit_msg_task();
-	if (!fork()) setpriority(0, PRIORITY_DEFAULT - 10), queue_str_task1();
-	if (!fork()) setpriority(0, PRIORITY_DEFAULT - 10), queue_str_task2();
+	//if (!fork()) setpriority(0, PRIORITY_DEFAULT - 10), queue_str_task1();
+	//if (!fork()) setpriority(0, PRIORITY_DEFAULT - 10), queue_str_task2();
 	if (!fork()) setpriority(0, PRIORITY_DEFAULT - 10), serial_readwrite_task();
 
 	setpriority(0, PRIORITY_LIMIT);
@@ -680,6 +766,10 @@ int main()
 	int timeup;
 	unsigned int tick_count = 0;
 
+//////////////////////////////////////////////////
+	itask.tasks=tasks;	
+        itask.task_count = &task_count;
+//////////////////////////////////////////////////
 	SysTick_Config(configCPU_CLOCK_HZ / configTICK_RATE_HZ);
 
 	init_rs232();
